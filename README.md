@@ -21,6 +21,10 @@ SCK | D5 | SCLK
 GND | GND | GND
 3.3 | 3.3 | GND
 
+# Usage
+Compile with Arduino 1.8.x. Flash to MCU with Tazmotizer. On the first power-up it will create a hotspot that allows configuation details to be entered.
+Default MQTT topic is ener/type/device-id/data
+
 # Authors
 * Kristian Shaw - ESP8266 implementation with MQTT support
 * David Whale (whaleygeek) - Original Raspberry Pi C implementation with ENER314-RT module
