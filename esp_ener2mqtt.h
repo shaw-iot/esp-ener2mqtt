@@ -196,3 +196,11 @@
 #define OT_SINT16 0xA0    // 16
 #define OT_SINT24 0xB0    // 24
 #define OT_FLOAT  0xF0    // Not implemented yet
+
+// OOK defaults
+#define DEFAULT_HC 0x8E, 0xE8, 0xEE, 0x88, 0x8E, 0xE8, 0xEE, 0x88, 0x8E, 0xE8
+#define PREAMBLE 0x80, 0x00, 0x00, 0x00
+// OOK Array positions
+#define OOK_MSGLEN 16
+#define INDEX_HC 4
+#define INDEX_SC 14

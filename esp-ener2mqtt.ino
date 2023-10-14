@@ -18,8 +18,8 @@
 #include "WiFiUdp.h"
 #include <Preferences.h>
 
-// Used to setup each SPI transaction. Run at 10Mhz.
-SPISettings RFM69SPI(10000000, MSBFIRST, SPI_MODE0);
+// Used to setup each SPI transaction. Run at 8Mhz as goimg faster causes corruption.
+SPISettings RFM69SPI(8000000, MSBFIRST, SPI_MODE0);
 
 WiFiClient espClient;
 WiFiUDP ntpUDP;
@@ -129,13 +129,26 @@ String OTTypeToString(uint8_t type)
   return "Unknown";
 }
 
-void setupRFM69RX() {
- Serial.println("setupRFM69RX: Resetting HRF69");
+void setupRFM69() {
+ Serial.println("setupRFM69: Resetting HRF69");
  digitalWrite(RESETRAD, HIGH);
  delayMicroseconds(100);
  digitalWrite(RESETRAD, LOW);
  delay(5);
- Serial.println("setupRFM69RX: Setting HRF69 mode to FSK");
+ // Configure in FSK recieve mode
+ setupRFM69_RX_FSK();
+ // Output radio info
+ Serial.printf("HRF_ADDR_OPMODE:0x%02X\n",getReg(HRF_ADDR_OPMODE));
+ Serial.printf("HRF_ADDR_REGDATAMODUL:0x%02X\n",getReg(HRF_ADDR_REGDATAMODUL));
+ Serial.printf("HRF_ADDR_VERSION:0x%02X\n",getReg(HRF_ADDR_VERSION));
+ Serial.printf("HRF_ADDR_PAYLOADLEN:0x%02X\n",getReg(HRF_ADDR_PAYLOADLEN));
+}
+
+/* 
+ * Configure radio to recieve FSK encoded messgages
+ */
+void setupRFM69_RX_FSK() {
+ Serial.println("setupRFM69_RX_FSK: Setting HRF69 mode to FSK RX");
  setReg(HRF_ADDR_REGDATAMODUL, HRF_VAL_REGDATAMODUL_FSK);      // modulation scheme FSK
  setReg(HRF_ADDR_FDEVMSB, HRF_VAL_FDEVMSB30);                  // frequency deviation 5kHz 0x0052 -> 30kHz 0x01EC
  setReg(HRF_ADDR_FDEVLSB, HRF_VAL_FDEVLSB30);                  // frequency deviation 5kHz 0x0052 -> 30kHz 0x01EC
@@ -154,11 +167,36 @@ void setupRFM69RX() {
  setReg(HRF_ADDR_PAYLOADLEN, HRF_VAL_PAYLOADLEN66);            // max Length in RX, not used in Tx
  setReg(HRF_ADDR_NODEADDRESS, 0x04);                           // Node address used in address filtering (not used) - PTG was 0x06 gpbenton uses 0x04
  setReg(HRF_ADDR_OPMODE, HRF_MODE_RECEIVER);                   // RX
- // Output radio info
- Serial.printf("HRF_ADDR_OPMODE:0x%02X\n",getReg(HRF_ADDR_OPMODE));
- Serial.printf("HRF_ADDR_REGDATAMODUL:0x%02X\n",getReg(HRF_ADDR_REGDATAMODUL));
- Serial.printf("HRF_ADDR_VERSION:0x%02X\n",getReg(HRF_ADDR_VERSION));
- Serial.printf("HRF_ADDR_PAYLOADLEN:0x%02X\n",getReg(HRF_ADDR_PAYLOADLEN));
+ while ((getReg(HRF_ADDR_IRQFLAGS1) & HRF_MASK_MODEREADY) != HRF_MASK_MODEREADY)
+  {
+     Serial.printf("?");
+     delay(20);
+  }
+  Serial.printf("FSK RX Set: HRF_ADDR_IRQFLAGS1: %02X, HRF_ADDR_IRQFLAGS2: %02X\n",getReg(HRF_ADDR_IRQFLAGS1),getReg(HRF_ADDR_IRQFLAGS2));
+}
+
+/* 
+ * Configure radio to send OOK messages. Send 4 bits to emulate each encoded 0 or 1. 1000 = 0, 1110 = 1.
+ * Don't use radio's own preamble, send as part of messgae.
+ */
+void setupRFM69_TX_OOK() {
+ Serial.println("setupRFM69_TX_OOK: Setting HRF69 mode to OOK TX");
+ setReg(HRF_ADDR_REGDATAMODUL, HRF_VAL_REGDATAMODUL_OOK);      // modulation scheme OOK
+ setReg(HRF_ADDR_FDEVMSB, 0);                                  // frequency deviation:0kHz
+ setReg(HRF_ADDR_FDEVLSB, 0);                                  // frequency deviation:0kHz
+ setReg(HRF_ADDR_FRMSB, HRF_VAL_FRMSB433);                     // carrier freq:433.92MHz 0x6C7AE1
+ setReg(HRF_ADDR_FRMID, HRF_VAL_FRMID433);                     // carrier freq:433.92MHz 0x6C7AE1
+ setReg(HRF_ADDR_FRLSB, HRF_VAL_FRLSB433);                     // carrier freq:433.92MHz 0x6C7AE1
+ setReg(HRF_ADDR_RXBW, HRF_VAL_RXBW120);                       // channel filter bandwidth:120kHz
+ setReg(HRF_ADDR_BITRATEMSB, 0x1A);                            // bitrate:4800b/s
+ setReg(HRF_ADDR_BITRATELSB, 0x0B);                            // bitrate:4800b/s
+ setReg(HRF_ADDR_PREAMBLELSB, 0);                              // preamble size LSB
+ setReg(HRF_ADDR_SYNCCONFIG, HRF_VAL_SYNCCONFIG0);             // Size of sync word (disabled)
+ setReg(HRF_ADDR_PACKETCONFIG1, 0x80);                         // TX Variable length, no Manchester coding
+ setReg(HRF_ADDR_PAYLOADLEN, 0);                               // no payload length
+ setReg(HRF_ADDR_OPMODE, HRF_MODE_TRANSMITTER);                // TX
+ waitForReg(HRF_ADDR_IRQFLAGS1, HRF_MASK_MODEREADY | HRF_MASK_TXREADY, HRF_MASK_MODEREADY | HRF_MASK_TXREADY);
+ Serial.printf("OOK TX mode set\n");
 }
 
 /* 
@@ -204,11 +242,98 @@ void setReg(byte reg, byte val)
 {
  startSPI();
  uint8_t txbuf[2];
- Serial.printf("setReg: Setting register 0x%02X to 0x%02X\n",reg,val);
+ //Serial.printf("setReg: Setting register 0x%02X to 0x%02X\n",reg,val);
  txbuf[0] = reg|HRF_MASK_WRITE_DATA;
  txbuf[1] = val;
  SPI.transfer(txbuf,2);
  endSPI();
+}
+
+
+/* 
+ * Read a register value from the RFM69 until it's the required value
+ */
+uint8_t waitForReg(uint8_t reg, uint8_t mask, uint8_t val)
+{
+  uint8_t i = 0; // timeout counter
+  for (i = 0; i < 20; i++) {
+    if ((getReg(reg) & mask) == val) {
+      return 1;
+    } else {
+      delay(20);
+    }
+  }
+  // ToDo - reset radio or restart ESP8266
+  return 0;
+}
+
+/* 
+ * Write array of bytes to the RFM69 FIFO. Radio will start transmitting at Threshold+1
+ * SPI.Transfer method overwrites array, so refresh it.
+ */
+uint8_t writeFIFO(uint8_t* buf, uint8_t len, uint8_t xmits) 
+{
+  Serial.printf("writeFIFO Start: HRF_ADDR_IRQFLAGS1: %02X, HRF_ADDR_IRQFLAGS2: %02X\n",getReg(HRF_ADDR_IRQFLAGS1),getReg(HRF_ADDR_IRQFLAGS2));
+  // Don't send more than 32 bytes
+  if (len > 32) return 0;
+  // Cap xmits at 14 as need to return to main loop
+  if ((xmits < 1) || (xmits > 14))
+  {
+    xmits = 14;
+  }
+  //uint8_t *txbuf = (uint8_t*)malloc((len + 1) * sizeof(uint8_t));
+  // Zero'd array
+  uint8_t txbuf[32] = {};
+  char printbuf[(32 * 3) + 1] = "";
+  payloadToChar(buf, 0, len+1, printbuf, sizeof(printbuf));
+  Serial.printf("TX payload: %s\n",printbuf);
+
+  // Tell radio to start transmitting when FIFO reaches len
+  setReg(HRF_ADDR_FIFOTHRESH, len-1);
+
+  int i;
+  for (i = 0; i < xmits; i++)
+  {
+    startSPI();
+    // Prefix data with byte to indicate write to FIFO
+    txbuf[0] = HRF_ADDR_FIFO | HRF_MASK_WRITE_DATA;     // write FIFO
+    memcpy(&txbuf[1], buf, len * sizeof(uint8_t));
+    SPI.transfer(txbuf,len+1);
+    endSPI();
+    waitForReg(HRF_ADDR_IRQFLAGS2, HRF_MASK_FIFOLEVEL, 0);
+  } //end repeat loop
+
+  Serial.printf("Repeat %d time(s) complete, waiting for transmission to complete\n", i);
+  waitForReg(HRF_ADDR_IRQFLAGS2, HRF_MASK_FIFONOTEMPTY, 0);
+  Serial.printf("FIFO flushed: HRF_ADDR_IRQFLAGS1: %02X, HRF_ADDR_IRQFLAGS2: %02X\n",getReg(HRF_ADDR_IRQFLAGS1),getReg(HRF_ADDR_IRQFLAGS2));
+  //free(txbuf);
+  setReg(HRF_ADDR_OPMODE, HRF_MODE_STANDBY);                // Sleep
+  return 1;
+}
+
+// Clear FIFO. Should limit to buffer size and reset radio if exceeded.
+void clearFIFO()
+{
+  Serial.printf("Clearing FIFO");
+  while ((getReg(HRF_ADDR_IRQFLAGS2) & HRF_MASK_FIFONOTEMPTY) == HRF_MASK_FIFONOTEMPTY)
+  {
+     Serial.printf(".");
+     getReg(HRF_ADDR_FIFO);
+  }
+  Serial.printf("\n");
+}
+
+/* 
+ * Send an OOK on signal to device 1 on the default house code
+ */
+void sendTestOOK()
+{
+  unsigned char radio_msg[OOK_MSGLEN] = {PREAMBLE, DEFAULT_HC, 0x00, 0x00};
+  radio_msg[INDEX_SC] = 238;    // Device 1
+  radio_msg[INDEX_SC + 1] = 238; // On
+  setupRFM69_TX_OOK();
+  writeFIFO(radio_msg,OOK_MSGLEN,10);
+  setupRFM69_RX_FSK();
 }
 
 uint8_t cryptByte(uint8_t data, uint16_t& g_ran)
@@ -249,11 +374,12 @@ uint16_t calculateCRC(uint8_t msg[], uint8_t length)
  */
 int payloadToChar(uint8_t payload[], uint8_t payload_start, uint8_t payload_len, char* buf, int buf_len) 
 {
-  int i;
+  uint8_t i;
   if ((payload_len - payload_start) > buf_len) return 0; // too large
 
-  for(i = 0; i < payload_len-payload_start; i++) {
+  for(i = 0; i < payload_len-1; i++) {
     sprintf(buf + i * 3, "%02X ", payload[i+payload_start]);
+    //Serial.printf("i: %d\n",i);
   }
   // Last byte
   sprintf(buf + i * 3, "%02X ", payload[i+payload_start]);
@@ -554,7 +680,7 @@ void setup()
   
   timeClient.begin();
   SPI.begin();
-  setupRFM69RX();
+  setupRFM69();
   counter_10sec = millis(); // 10 second loop counter
   counter_1sec = counter_10sec; // 1 second loop counter
   Serial.println("setup: Done setup");
