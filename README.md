@@ -6,7 +6,7 @@ Designed to work with the RFM69W 433Mhz HopeRF Wireless Transceiver and an ESP82
 # Supported devices
 Recieves messages from the Energenie devices that use the OpenThings protocol. This is useful for integrating door sensors and power monitors into home automation systems.
 
-Transmit function not yet implemented.
+Transmit function not yet fully implemented.
 
 https://energenie4u.co.uk/
 
@@ -30,7 +30,13 @@ Default MQTT topic is ener/type/device-id/data
 * TX functions - simple commands to control switches should be possible with simple code. Would likely need an TX queue. Thermostat control is more complicated as these devices are usually sleeping.
 * RX via interrupt rather than loop
 
-# Authors
+# Changelog
+Initial     - RX working for FSK devices, publishing to MQTT
+2023-10-14  - Proof of concept for OOK sending 
+
+# Author
 * Kristian Shaw - ESP8266 implementation with MQTT support
+
+# Credit
 * David Whale (whaleygeek) - Original Raspberry Pi C implementation with ENER314-RT module
 * Philip Grainger (Achronite) - Improved Raspberry Pi implemenation with NodeRed and MQTT functionality
